@@ -7,9 +7,9 @@ application =
 {
 	content =
 	{
-		width = 800,
-		height = 450, 
-		scale = "zoomStretch",
+		width = 450,
+		height = 800, 
+		scale = "stretch",
 		fps = 60,
 		
 		--[[

@@ -9,14 +9,19 @@ local json = require("json")
 local widget = require("widget")
 
 -- Device constants
+local actualW = display.actualContentWidth
+local actualH = display.actualContentHeight
+local centerX = display.contentCenterX
+local centerY = display.contentCenterY
+
 local W = display.contentWidth
 local H = display.contentHeight
-local FLOOR_Y = 380
+local FLOOR_Y = 450
 
 -- Game state
 local STATE = "MENU"
 local udp = nil
-local server_ip = "127.0.0.1"
+local server_ip = "[IP_ADDRESS]"
 local server_port = 5555
 local player_id = 0
 
@@ -57,7 +62,7 @@ end
 
 -- ================= MENU STATE =================
 
-local menuBg = display.newRect(menuGroup, W/2, H/2, W, H)
+local menuBg = display.newRect(menuGroup, centerX, centerY, actualW, actualH)
 menuBg:setFillColor(0.12, 0.15, 0.22)
 
 local titleText, titleShadow = createTextWithShadow(menuGroup, "BOUNCING BALL ARENA", W/2, 60, native.systemFontBold, 40, {1, 0.8, 0.2})
@@ -148,9 +153,12 @@ local function downloadImages(bgNum)
     local function bgListener(event)
         if not event.isError and STATE == "PLAYING" then
             if bgImage then bgImage:removeSelf() end
-            -- Make it cover exactly the logical bounds (W, H)
-            bgImage = display.newImageRect(Groupbg, bgStr, imgDir, W, H)
-            bgImage.x, bgImage.y = W/2, H/2
+            -- Make it cover exactly the actual screen bounds
+            bgImage = display.newImage(Groupbg, bgStr, imgDir)
+            if bgImage then
+                bgImage.x, bgImage.y = centerX, centerY
+                bgImage.width, bgImage.height = actualW, actualH
+            end
         end
     end
     network.download(bgUrl, "GET", bgListener, bgStr, imgDir)
@@ -158,8 +166,11 @@ local function downloadImages(bgNum)
     local function p1Listener(event)
         if not event.isError and STATE == "PLAYING" then
             display.remove(p1Obj)
-            p1Obj = display.newImageRect(gameGroup, "CHA1.png", imgDir, 80, 100)
-            p1Obj.x, p1Obj.y = 120, FLOOR_Y - 50
+            p1Obj = display.newImage(gameGroup, "CHA1.png", imgDir)
+            if p1Obj then
+                p1Obj.width, p1Obj.height = 80, 100
+                p1Obj.x, p1Obj.y = 120, FLOOR_Y - 50
+            end
         end
     end
     network.download(p1Url, "GET", p1Listener, "CHA1.png", imgDir)
@@ -167,8 +178,11 @@ local function downloadImages(bgNum)
     local function p2Listener(event)
         if not event.isError and STATE == "PLAYING" then
             display.remove(p2Obj)
-            p2Obj = display.newImageRect(gameGroup, "CHA2.png", imgDir, 80, 100)
-            p2Obj.x, p2Obj.y = W - 120, FLOOR_Y - 50
+            p2Obj = display.newImage(gameGroup, "CHA2.png", imgDir)
+            if p2Obj then
+                p2Obj.width, p2Obj.height = 80, 100
+                p2Obj.x, p2Obj.y = W - 120, FLOOR_Y - 50
+            end
         end
     end
     network.download(p2Url, "GET", p2Listener, "CHA2.png", imgDir)
@@ -176,13 +190,13 @@ end
 
 local function initGameUI(bgNum)
     -- Draw placeholders until downloaded
-    bgImage = display.newRect(Groupbg, W/2, H/2, W, H)
+    bgImage = display.newRect(Groupbg, centerX, centerY, actualW, actualH)
     bgImage:setFillColor(0.3, 0.6, 0.9)
     
     -- Outline the game area to clearly show bounds vs letterbox
-    boundsRect = display.newRect(Groupbg, W/2, H/2, W, H)
+    boundsRect = display.newRect(Groupbg, centerX, centerY, actualW, actualH)
     boundsRect:setFillColor(0, 0, 0, 0)
-    boundsRect.strokeWidth = 4
+    boundsRect.strokeWidth = 0
     boundsRect:setStrokeColor(1, 1, 1, 0.5)
 
     -- Draw net

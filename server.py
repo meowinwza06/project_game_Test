@@ -18,7 +18,7 @@ clients = [] # list of (ip, port)
 # Game Constants
 WIDTH = 800
 HEIGHT = 450
-FLOOR_Y = 380
+FLOOR_Y = 450
 BALL_RADIUS = 15
 P_WIDTH = 80
 P_HEIGHT = 100
@@ -39,6 +39,7 @@ def reset_ball(scorer):
     ball["vx"] = random.choice([-300, 300]) # Faster serve
     ball["vy"] = -50
     ball["reset_timer"] = 0
+    ball["scored"] = False
 
 def send_to_all(msg_dict):
     try:
@@ -108,24 +109,15 @@ while True:
             send_to_all({"type": "GAMEOVER", "winner": winner})
             clients = [] # Reset lobby
             print(f"Game Over! Winner: Player {winner}")
-        elif ball.get("reset_timer", 0) > 0:
+            time.sleep(1/60)
+            continue
+            
+        if ball.get("reset_timer", 0) > 0:
             ball["reset_timer"] -= dt
             if ball["reset_timer"] <= 0:
                 reset_ball(1) # scrorer is ignored now
-            
-            # Broadcast state holding steady
-            state_msg = {
-                "type": "STATE",
-                "ball": {"x": int(ball["x"]), "y": int(ball["y"])},
-                "p1": {"x": int(p1["x"]), "y": int(p1["y"]), "score": p1["score"]},
-                "p2": {"x": int(p2["x"]), "y": int(p2["y"]), "score": p2["score"]},
-                "time": int(game_time)
-            }
-            send_to_all(state_msg)
-            time.sleep(1/60)
-            continue
-        else:
-            # Update ball physics
+        
+        # Update ball physics (Runs during reset_timer too!)
             ball_next_x = ball["x"] + ball["vx"] * dt
             ball_next_y = ball["y"] + ball["vy"] * dt
             
@@ -140,19 +132,19 @@ while True:
                 ball_next_x = WIDTH - BALL_RADIUS
                 ball["vx"] *= -0.8
                 
-            # Floor collision (Scoring)
+            # Floor collision (Scoring and Bouncing)
             if ball_next_y + BALL_RADIUS >= FLOOR_Y:
-                ball["x"] = ball_next_x
-                ball["y"] = FLOOR_Y - BALL_RADIUS # Rest it on the ground visually
-                ball["vx"] = 0
-                ball["vy"] = 0
-                ball["reset_timer"] = 1.0 # 1 second delay
+                ball_next_y = FLOOR_Y - BALL_RADIUS
+                ball["vy"] *= -0.8
                 
-                if ball_next_x < WIDTH / 2:
-                    p2["score"] += 1
-                else:
-                    p1["score"] += 1
-                continue
+                if not ball.get("scored", False):
+                    ball["scored"] = True
+                    ball["reset_timer"] = 1.5 # 1.5 second delay watching it bounce!
+                    
+                    if ball_next_x < WIDTH / 2:
+                        p2["score"] += 1
+                    else:
+                        p1["score"] += 1
 
             # Ceiling collision
             if ball_next_y - BALL_RADIUS < 0:
