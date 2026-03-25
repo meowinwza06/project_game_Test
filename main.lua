@@ -8,6 +8,24 @@ local socket = require("socket")
 local json = require("json")
 local widget = require("widget")
 
+-- Global SFX
+local sfx = {}
+local function initAudio()
+    local files = {"pop.mp3", "win.mp3", "lose.mp3"}
+    local baseUrl = "https://raw.githubusercontent.com/meowinwza06/project_game_Test/main/"
+    for _, file in ipairs(files) do
+        local function listener(event)
+            if not event.isError then
+                if file == "pop.mp3" then sfx.pop = audio.loadSound(file, system.TemporaryDirectory) end
+                if file == "win.mp3" then sfx.win = audio.loadSound(file, system.TemporaryDirectory) end
+                if file == "lose.mp3" then sfx.lose = audio.loadSound(file, system.TemporaryDirectory) end
+            end
+        end
+        network.download(baseUrl .. file, "GET", listener, file, system.TemporaryDirectory)
+    end
+end
+initAudio()
+
 -- Device constants
 local actualW = display.actualContentWidth
 local actualH = display.actualContentHeight
@@ -141,14 +159,33 @@ menuGroup:insert(connectBtn)
 
 -- ================= GAME STATE =================
 
--- Network Download Images
-local function downloadImages(bgNum)
+-- Network Download Images and BGM
+local function downloadImages(bgNum, bgmNum)
     local bgStr = "BG" .. tostring(bgNum) .. ".jpg"
     local bgUrl = "https://raw.githubusercontent.com/meowinwza06/project_game/main/" .. bgStr
     local p1Url = "https://raw.githubusercontent.com/meowinwza06/project_game/main/CHA12.png"
     local p2Url = "https://raw.githubusercontent.com/meowinwza06/project_game/main/CHA2.png"
     
+    local bgmStr = tostring(bgmNum) .. ".mp3"
+    local bgmUrl = "https://raw.githubusercontent.com/meowinwza06/project_game_Test/main/" .. bgmStr
+    
     local imgDir = system.TemporaryDirectory
+    
+    local function bgmListener(event)
+        if not event.isError and STATE == "PLAYING" then
+            timer.performWithDelay(2000, function()
+                if STATE == "PLAYING" then
+                    audio.setVolume(0.1, { channel=1 })
+                    local bgMusic = audio.loadStream(bgmStr, imgDir)
+                    if bgMusic then
+                        audio.play(bgMusic, { channel=1, loops=-1, fadein=1000 })
+                    end
+                end
+            end)
+        end
+    end
+    audio.stop(1)
+    network.download(bgmUrl, "GET", bgmListener, bgmStr, imgDir)
     
     local function bgListener(event)
         if not event.isError and STATE == "PLAYING" then
@@ -188,7 +225,7 @@ local function downloadImages(bgNum)
     network.download(p2Url, "GET", p2Listener, "CHA2.png", imgDir)
 end
 
-local function initGameUI(bgNum)
+local function initGameUI(bgNum, bgmNum)
     -- Draw placeholders until downloaded
     bgImage = display.newRect(Groupbg, centerX, centerY, actualW, actualH)
     bgImage:setFillColor(0.3, 0.6, 0.9)
@@ -224,15 +261,15 @@ local function initGameUI(bgNum)
     gameoverText, _ = createTextWithShadow(gameGroup, "", W/2, H/2, native.systemFontBold, 64, {1, 0.2, 0.2})
     gameoverText.isVisible = false
     
-    downloadImages(bgNum)
+    downloadImages(bgNum, bgmNum)
 end
 
-local function startGame(bgNum)
+local function startGame(bgNum, bgmNum)
     STATE = "PLAYING"
     menuGroup.isVisible = false
     Groupbg.isVisible = true
     gameGroup.isVisible = true
-    initGameUI(bgNum)
+    initGameUI(bgNum, bgmNum)
 end
 
 -- Keyboard handling for WASD
@@ -372,7 +409,8 @@ local function update()
                         statusText:setFillColor(0.4, 1, 0.4)
                     elseif msg.type == "START" then
                         local bgNum = msg.bg_num or 2
-                        startGame(bgNum)
+                        local bgmNum = msg.bgm_num or 1
+                        startGame(bgNum, bgmNum)
                     end
                 elseif STATE == "PLAYING" then
                     if msg.type == "STATE" then
@@ -390,14 +428,27 @@ local function update()
                         scoreShadow.text = scoreText.text
                         timeText.text = "Time: " .. msg.time
                         timeShadow.text = timeText.text
+                    elseif msg.type == "HIT" then
+                        if sfx.pop then
+                            audio.play(sfx.pop)
+                        end
                     elseif msg.type == "GAMEOVER" then
                         STATE = "GAMEOVER"
+                        audio.stop(1) -- Stop BGM
                         timeText.text = "Time: 0"
                         timeShadow.text = "Time: 0"
                         
                         local winStr = ""
-                        if msg.winner == 0 then winStr = "DRAW!" 
-                        else winStr = "PLAYER " .. msg.winner .. " WINS!" end
+                        if msg.winner == 0 then 
+                            winStr = "DRAW!" 
+                        else 
+                            winStr = "PLAYER " .. msg.winner .. " WINS!" 
+                            if msg.winner == player_id then
+                                if sfx.win then audio.play(sfx.win) end
+                            else
+                                if sfx.lose then audio.play(sfx.lose) end
+                            end
+                        end
                         
                         gameoverText.text = winStr
                         gameoverText.isVisible = true
