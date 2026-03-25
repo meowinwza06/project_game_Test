@@ -12,23 +12,25 @@ sock.setblocking(False)
 
 print(f"UDP Server up and listening on {HOST}:{PORT}")
 
-state = "LOBBY" 
+state = "LOBBY"  # LOBBY / PLAYING / PAUSED / GAMEOVER
 clients = [] 
+bound_min_x = 0
+bound_max_x = 1000
 
 # Game Constants
-WIDTH = 800
-HEIGHT = 450
-FLOOR_Y = 450
-BALL_RADIUS = 25  # เพิ่มขนาดลูกบอลจาก 15 เป็น 25
-P_WIDTH = 80
-P_HEIGHT = 100
-NET_HEIGHT = 120
-NET_WIDTH = 12
+WIDTH = 1000
+HEIGHT = 500
+FLOOR_Y = 500
+BALL_RADIUS = 70
+P_WIDTH = 240
+P_HEIGHT = 300
+NET_HEIGHT = 360
+NET_WIDTH = 36
 
 # Physics state
 ball = {"x": WIDTH/2, "y": 50, "vx": 0, "vy": 0, "reset_timer": 0, "scored": False}
-p1 = {"x": 80, "y": FLOOR_Y - P_HEIGHT/2, "score": 0, "w": P_WIDTH, "h": P_HEIGHT}
-p2 = {"x": WIDTH - 80, "y": FLOOR_Y - P_HEIGHT/2, "score": 0, "w": P_WIDTH, "h": P_HEIGHT}
+p1 = {"x": 150, "y": FLOOR_Y - P_HEIGHT/2, "score": 0, "w": P_WIDTH, "h": P_HEIGHT}
+p2 = {"x": WIDTH - 150, "y": FLOOR_Y - P_HEIGHT/2, "score": 0, "w": P_WIDTH, "h": P_HEIGHT}
 game_time = 90
 last_time = time.time()
 
@@ -74,10 +76,22 @@ while True:
                     if len(clients) == 2:
                         state = "PLAYING"
                         game_time = 90
+                        bound_min_x = msg.get("minX", 0)
+                        bound_max_x = msg.get("maxX", WIDTH)
                         p1["score"], p2["score"] = 0, 0
                         reset_ball(1)
                         send_to_all({"type": "START", "time": game_time, "bg_num": random.randint(1,4), "bgm_num": random.randint(1,3)})
             
+            elif msg["type"] == "FORCE_START" and state == "LOBBY":
+                if addr in clients:
+                    state = "PLAYING"
+                    game_time = 90
+                    bound_min_x = msg.get("minX", 0)
+                    bound_max_x = msg.get("maxX", WIDTH)
+                    p1["score"], p2["score"] = 0, 0
+                    reset_ball(1)
+                    send_to_all({"type": "START", "time": game_time, "bg_num": random.randint(1,4), "bgm_num": random.randint(1,3)})
+
             elif msg["type"] == "MOVE" and state == "PLAYING":
                 if addr in clients:
                     pid = clients.index(addr) + 1
@@ -85,10 +99,37 @@ while True:
                         p1["x"], p1["y"] = msg.get("x", p1["x"]), msg.get("y", p1["y"])
                     elif pid == 2:
                         p2["x"], p2["y"] = msg.get("x", p2["x"]), msg.get("y", p2["y"])
+
+            elif msg["type"] == "PAUSE_REQUEST" and state == "PLAYING":
+                if addr in clients:
+                    other_idx = 1 - clients.index(addr)
+                    if other_idx < len(clients):
+                        sock.sendto(json.dumps({"type": "PAUSE_REQUEST"}).encode('utf-8'), clients[other_idx])
+
+            elif msg["type"] == "PAUSE_RESPONSE" and state == "PLAYING":
+                if addr in clients:
+                    accept = msg.get("accept", False)
+                    other_idx = 1 - clients.index(addr)
+                    if accept:
+                        state = "PAUSED"
+                        send_to_all({"type": "PAUSED"})
+                    else:
+                        if other_idx < len(clients):
+                            sock.sendto(json.dumps({"type": "PAUSE_DENIED"}).encode('utf-8'), clients[other_idx])
+
+            elif msg["type"] == "RESUME" and state == "PAUSED":
+                state = "PLAYING"
+                last_time = time.time()  # reset dt to avoid time jump
+                send_to_all({"type": "RESUMED"})
         except (BlockingIOError, Exception):
             break
 
     # Update Game State
+    if state == "PAUSED":
+        last_time = now  # keep resetting so dt doesn't accumulate
+        time.sleep(1/60)
+        continue
+
     if state == "PLAYING":
         game_time -= dt
         if game_time <= 0:
@@ -109,9 +150,12 @@ while True:
         ball["vy"] += 600 * dt # Gravity
 
         # Wall collisions
-        if ball_next_x - BALL_RADIUS < 0 or ball_next_x + BALL_RADIUS > WIDTH:
+        if ball_next_x - BALL_RADIUS < bound_min_x:
             ball["vx"] *= -0.8
-            ball_next_x = ball["x"] # ป้องกันบอลทะลุ
+            ball_next_x = bound_min_x + BALL_RADIUS # ป้องกันบอลทะลุ
+        elif ball_next_x + BALL_RADIUS > bound_max_x:
+            ball["vx"] *= -0.8
+            ball_next_x = bound_max_x - BALL_RADIUS # ป้องกันบอลทะลุ
 
         # Floor/Score
         if ball_next_y + BALL_RADIUS >= FLOOR_Y:
@@ -125,10 +169,17 @@ while True:
 
         # Net collision
         net_x = WIDTH / 2
-        if ball_next_y + BALL_RADIUS > FLOOR_Y - NET_HEIGHT:
-            if abs(ball_next_x - net_x) < (NET_WIDTH/2 + BALL_RADIUS):
-                ball["vx"] *= -0.8
-                ball_next_x = ball["x"]
+        net_top = FLOOR_Y - NET_HEIGHT
+        if abs(ball_next_x - net_x) < (NET_WIDTH/2 + BALL_RADIUS):
+            if ball["y"] <= net_top and ball_next_y + BALL_RADIUS > net_top:
+                # Top bounce
+                ball["vy"] *= -0.7
+                ball_next_y = net_top - BALL_RADIUS
+            elif ball_next_y + BALL_RADIUS > net_top:
+                # Side bounce
+                if (ball["x"] < net_x and ball["vx"] > 0) or (ball["x"] > net_x and ball["vx"] < 0):
+                    ball["vx"] *= -0.8
+                    ball_next_x = ball["x"]
 
         # Player collisions
         hit = False

@@ -34,7 +34,7 @@ local centerY = display.contentCenterY
 
 local W = display.contentWidth
 local H = display.contentHeight
-local FLOOR_Y = 450
+local FLOOR_Y = 500  -- Match server physics
 
 -- Game state
 local STATE = "MENU"
@@ -42,6 +42,8 @@ local udp = nil
 local server_ip = "[IP_ADDRESS]"
 local server_port = 5555
 local player_id = 0
+local isPaused = false
+local pauseMenuVisible = false
 
 -- Physics / Input states
 local keys = { w=false, a=false, s=false, d=false, up=false, down=false, left=false, right=false }
@@ -53,8 +55,17 @@ local swipe_triggered = false
 local Groupbg = display.newGroup()
 local menuGroup = display.newGroup()
 local gameGroup = display.newGroup()
+local pauseMenuGroup = display.newGroup()
+local pauseRequestGroup = display.newGroup()
+local hudGroup = display.newGroup()  -- For HUD elements like pause button
+local warningGroup = display.newGroup()
+
 Groupbg.isVisible = false
+warningGroup.isVisible = false
 gameGroup.isVisible = false
+pauseMenuGroup.isVisible = false
+pauseRequestGroup.isVisible = false
+hudGroup.isVisible = false
 
 -- Game objects
 local bgImage
@@ -67,7 +78,9 @@ local timeText
 local timeShadow
 local statusText
 local gameoverText
-local boundsRect -- Visible bounding box for debugging and clarity
+local pauseBtn
+local ipBg
+local portBg
 
 -- Function for drop shadow text
 local function createTextWithShadow(group, textString, x, y, font, size, color)
@@ -80,97 +93,373 @@ end
 
 -- ================= MENU STATE =================
 
-local menuBg = display.newRect(menuGroup, centerX, centerY, actualW, actualH)
-menuBg:setFillColor(0.12, 0.15, 0.22)
+local menuBg = display.newRect(menuGroup, centerX, centerY, 2000, 1500)
+local bgGradient = {
+    type="gradient",
+    color1={ 0.05, 0.08, 0.15, 1 },
+    color2={ 0.15, 0.20, 0.35, 1 },
+    direction="down"
+}
+menuBg:setFillColor(bgGradient)
 
-local titleText, titleShadow = createTextWithShadow(menuGroup, "BOUNCING BALL ARENA", W/2, 60, native.systemFontBold, 40, {1, 0.8, 0.2})
+local titleText, titleShadow = createTextWithShadow(menuGroup, "BOUNCING BALL ARENA", W/2, H*0.15, native.systemFontBold, 46, {1, 1, 1})
+local titleGradient = {
+    type = "gradient",
+    color1 = { 1, 0.9, 0.2, 1 },
+    color2 = { 1, 0.5, 0.0, 1 },
+    direction = "down"
+}
+titleText:setFillColor(titleGradient)
+-- Subtle pulse effect
+transition.to(titleText, { time=2000, xScale=1.03, yScale=1.03, transition=easing.continuousLoop, iterations=-1 })
+transition.to(titleShadow, { time=2000, xScale=1.03, yScale=1.03, transition=easing.continuousLoop, iterations=-1 })
 
-local ipGroup = display.newGroup()
-menuGroup:insert(ipGroup)
+local ipLabelText = display.newText(menuGroup, "SERVER IP", W/2, H*0.24, native.systemFontBold, 26)
+ipLabelText:setFillColor(0.6, 0.8, 1)
 
-local ipLabelText = display.newText(menuGroup, "Server IP:", W/2 - 120, 150, native.systemFontBold, 22)
-ipLabelText.anchorX = 1
+ipBg = display.newRoundedRect(menuGroup, W/2, H*0.32, 440, 72, 36)
+ipBg:setFillColor(1, 1, 1, 0.2)
+ipBg.strokeWidth = 2
+ipBg:setStrokeColor(0.2, 0.6, 1, 0.8)
 
-local ipField = native.newTextField( W/2 + 50, 150, 240, 50 )
+local ipField = native.newTextField( W/2, H*0.32, 400, 50 )
 ipField.text = server_ip
-ipField.font = native.newFont(native.systemFont, 18)
+ipField.font = native.newFont(native.systemFont, 28)
 menuGroup:insert(ipField)
 
-local portLabelText = display.newText(menuGroup, "Server Port:", W/2 - 120, 220, native.systemFontBold, 22)
-portLabelText.anchorX = 1
+local portLabelText = display.newText(menuGroup, "SERVER PORT", W/2, H*0.46, native.systemFontBold, 26)
+portLabelText:setFillColor(0.6, 0.8, 1)
 
-local portField = native.newTextField( W/2 + 50, 220, 240, 50 )
+portBg = display.newRoundedRect(menuGroup, W/2, H*0.54, 440, 72, 36)
+portBg:setFillColor(1, 1, 1, 0.2)
+portBg.strokeWidth = 2
+portBg:setStrokeColor(0.2, 0.6, 1, 0.8)
+
+local portField = native.newTextField( W/2, H*0.54, 400, 50 )
 portField.text = tostring(server_port)
-portField.font = native.newFont(native.systemFont, 18)
+portField.font = native.newFont(native.systemFont, 28)
 menuGroup:insert(portField)
 
-statusText, _ = createTextWithShadow(menuGroup, "Enter server details to connect", W/2, 350, native.systemFont, 22, {0.8, 0.8, 0.8})
+statusText, _ = createTextWithShadow(menuGroup, "Enter server details to connect", W/2, H*0.88, native.systemFont, 20, {0.8, 0.8, 0.8})
+transition.to(statusText, { time=1000, alpha=0.3, transition=easing.continuousLoop, iterations=-1 })
+
+local waitingText  -- text for waiting state
+
+-- Function to show loading animation and text
+local function showLoadingAnimation()
+    waitingText = display.newText(menuGroup, "กำลังรอผู้เล่นคนที่ 2...", W/2, centerY, native.systemFontBold, 32)
+    waitingText:setFillColor(0.2, 0.9, 0.5)
+    transition.to(waitingText, { time=800, alpha=0.3, transition=easing.continuousLoop, iterations=-1 })
+    transition.to(waitingText, { time=1500, xScale=1.1, yScale=1.1, transition=easing.continuousLoop, iterations=-1 })
+end
+
+local function hideLoadingAnimation()
+    if waitingText then
+        transition.cancel(waitingText)
+        waitingText:removeSelf()
+        waitingText = nil
+    end
+end
 
 -- Function to connect
+local function closeWarningPopup()
+    warningGroup.isVisible = false
+    if ipField then ipField.isVisible = true end
+    if portField then portField.isVisible = true end
+end
+
+local function showWarningPopup()
+    warningGroup:toFront()
+    warningGroup.isVisible = true
+    if ipField then ipField.isVisible = false end
+    if portField then portField.isVisible = false end
+end
+
+local function buildWarningPopup()
+    local overlay = display.newRect(warningGroup, centerX, centerY, 3000, 2000)
+    overlay:setFillColor(0, 0, 0, 0.8)
+    overlay:addEventListener("tap", function() return true end)
+    overlay:addEventListener("touch", function() return true end)
+
+    local panel = display.newRoundedRect(warningGroup, centerX, centerY, 600, 360, 30)
+    panel:setFillColor(0.1, 0.13, 0.2, 0.98)
+    panel.strokeWidth = 4
+    panel:setStrokeColor(1, 0.4, 0.2)
+
+    local warningTitle = display.newText(warningGroup, "⚠️ ข้อมูลไม่ครบถ้วน", centerX, centerY - 100, native.systemFontBold, 44)
+    warningTitle:setFillColor(1, 0.4, 0.2)
+
+    local warningMsg = display.newText(warningGroup, "กรุณากรอกหมายเลข IP และ Port\nของเครื่องเซิร์ฟเวอร์ให้ถูกต้องครบถ้วน\n(เช่น 192.168.1.10 และ 5555)", centerX, centerY, native.systemFont, 28)
+    warningMsg:setFillColor(0.9, 0.9, 0.9)
+    warningMsg.align = "center"
+
+    local closeBtn = widget.newButton({
+        x = centerX,
+        y = centerY + 110,
+        label = "ตกลง",
+        font = native.systemFontBold,
+        fontSize = 28,
+        shape = "roundedRect",
+        width = 240, height = 64,
+        cornerRadius = 32,
+        fillColor = { default={0.8, 0.2, 0.2, 1}, over={0.6, 0.1, 0.1, 1} },
+        labelColor = { default={1,1,1}, over={0.9,0.9,0.9} },
+        onEvent = function(e)
+            if e.phase == "ended" then
+                closeWarningPopup()
+            end
+        end
+    })
+    warningGroup:insert(closeBtn)
+end
+buildWarningPopup()
+
 local function connectToServer(event)
     if event.phase == "ended" then
         server_ip = ipField.text
         server_port = tonumber(portField.text)
-        
-        if not server_ip or not server_port then
-            statusText.text = "Invalid IP or Port"
-            statusText:setFillColor(1, 0, 0)
+
+        if not server_ip or server_ip == "" or server_ip == "[IP_ADDRESS]" or not server_port then
+            showWarningPopup()
             return
         end
-        
+
         -- Initialize UDP
         udp = socket.udp()
         udp:settimeout(0)
-        udp:setpeername(server_ip, server_port)
+        local success, err = udp:setpeername(server_ip, server_port)
         
+        if not success then
+            showWarningPopup()
+            udp:close()
+            udp = nil
+            return
+        end
+
         -- Send JOIN message
-        local msg = json.encode({type = "JOIN"})
+        local msg = json.encode({
+            type = "JOIN",
+            minX = display.screenOriginX,
+            maxX = display.contentWidth - display.screenOriginX
+        })
         udp:send(msg)
-        
-        statusText.text = "Connecting to Server..."
-        statusText:setFillColor(1, 1, 0)
+
         STATE = "CONNECTING"
-        
-        -- Hide inputs
+
+        -- Hide inputs and button, show loading
         ipField.isVisible = false
         portField.isVisible = false
+        ipLabelText.isVisible = false
+        portLabelText.isVisible = false
+        if ipBg then ipBg.isVisible = false end
+        if portBg then portBg.isVisible = false end
+        statusText.isVisible = false
+
+        -- Find and hide connect button
+        event.target.isVisible = false
+
+        showLoadingAnimation()
     end
 end
 
 local connectBtn = widget.newButton(
     {
         x = W/2,
-        y = 290,
+        y = H*0.72,
         id = "connect",
         label = "CONNECT",
         font = native.systemFontBold,
-        fontSize = 24,
+        fontSize = 26,
         onEvent = connectToServer,
         shape = "roundedRect",
-        width = 200, height = 60,
-        cornerRadius = 8,
-        fillColor = { default={0.15, 0.65, 0.95, 1}, over={0.1, 0.45, 0.75, 1} },
-        labelColor = { default={1,1,1}, over={0.8,0.8,0.8} },
-        strokeColor = { default={1,1,1}, over={0.8,0.8,0.8}},
-        strokeWidth = 3
+        width = 240, height = 64,
+        cornerRadius = 32,
+        fillColor = { 
+            default={ type="gradient", color1={1, 0.6, 0.2, 1}, color2={1, 0.3, 0.1, 1}, direction="down" }, 
+            over={ type="gradient", color1={0.8, 0.4, 0.1, 1}, color2={0.8, 0.2, 0.05, 1}, direction="down" } 
+        },
+        labelColor = { default={1,1,1}, over={0.9,0.9,0.9} },
+        strokeColor = { default={1, 0.8, 0.4, 1}, over={0.8, 0.6, 0.2, 1}},
+        strokeWidth = 2
     }
 )
 menuGroup:insert(connectBtn)
+transition.to(connectBtn, { time=1500, xScale=1.05, yScale=1.05, transition=easing.continuousLoop, iterations=-1 })
+
+-- ================= PAUSE MENU =================
+
+local function closePauseMenu()
+    pauseMenuGroup.isVisible = false
+    pauseMenuVisible = false
+end
+
+local function openPauseMenu()
+    pauseMenuGroup.isVisible = true
+    pauseMenuVisible = true
+end
+
+local function buildPauseMenu()
+    -- Dark transparent overlay
+    local overlay = display.newRect(pauseMenuGroup, centerX, centerY, actualW, actualH)
+    overlay:setFillColor(0, 0, 0, 0.7)
+
+    -- Menu panel
+    local panel = display.newRoundedRect(pauseMenuGroup, centerX, centerY, 340, 280, 16)
+    panel:setFillColor(0.1, 0.13, 0.2, 0.97)
+    panel.strokeWidth = 2
+    panel:setStrokeColor(0.3, 0.5, 0.9)
+
+    -- Title
+    local pauseTitle = display.newText(pauseMenuGroup, "⏸  PAUSED", centerX, centerY - 95, native.systemFontBold, 28)
+    pauseTitle:setFillColor(1, 0.85, 0.2)
+
+    -- Separator line
+    local sep = display.newRect(pauseMenuGroup, centerX, centerY - 63, 280, 2)
+    sep:setFillColor(0.3, 0.5, 0.9, 0.5)
+
+    -- Button: หยุดเกมชั่วคราว
+    local reqPauseBtn = widget.newButton({
+        x = centerX,
+        y = centerY - 28,
+        label = "⏸  ขอหยุดเกมชั่วคราว",
+        font = native.systemFontBold,
+        fontSize = 20,
+        shape = "roundedRect",
+        width = 280, height = 50,
+        cornerRadius = 8,
+        fillColor = { default={0.15, 0.45, 0.85, 1}, over={0.1, 0.3, 0.65, 1} },
+        labelColor = { default={1,1,1}, over={0.8,0.8,0.8} },
+        onEvent = function(e)
+            if e.phase == "ended" then
+                if udp then
+                    udp:send(json.encode({type = "PAUSE_REQUEST"}))
+                end
+                closePauseMenu()
+            end
+        end
+    })
+    pauseMenuGroup:insert(reqPauseBtn)
+
+    -- Button: กลับเข้าเกม
+    local resumeBtn = widget.newButton({
+        x = centerX,
+        y = centerY + 32,
+        label = "▶  กลับเข้าเกม",
+        font = native.systemFontBold,
+        fontSize = 20,
+        shape = "roundedRect",
+        width = 280, height = 50,
+        cornerRadius = 8,
+        fillColor = { default={0.15, 0.65, 0.25, 1}, over={0.1, 0.45, 0.15, 1} },
+        labelColor = { default={1,1,1}, over={0.8,0.8,0.8} },
+        onEvent = function(e)
+            if e.phase == "ended" then
+                closePauseMenu()
+            end
+        end
+    })
+    pauseMenuGroup:insert(resumeBtn)
+
+    -- Button: ออกจากเกม
+    local quitBtn = widget.newButton({
+        x = centerX,
+        y = centerY + 92,
+        label = "✕  ออกจากเกม",
+        font = native.systemFontBold,
+        fontSize = 20,
+        shape = "roundedRect",
+        width = 280, height = 50,
+        cornerRadius = 8,
+        fillColor = { default={0.65, 0.15, 0.15, 1}, over={0.45, 0.1, 0.1, 1} },
+        labelColor = { default={1,1,1}, over={0.8,0.8,0.8} },
+        onEvent = function(e)
+            if e.phase == "ended" then
+                closePauseMenu()
+                -- Reset and go back to menu
+                STATE = "MENU"
+                isPaused = false
+                if udp then udp:close(); udp = nil end
+                audio.stop(1)
+                Groupbg.isVisible = false
+                gameGroup.isVisible = false
+                hudGroup.isVisible = false
+                menuGroup.isVisible = true
+                -- Re-show menu elements
+                ipField.isVisible = true
+                portField.isVisible = true
+                ipLabelText.isVisible = true
+                portLabelText.isVisible = true
+                if ipBg then ipBg.isVisible = true end
+                if portBg then portBg.isVisible = true end
+                statusText.isVisible = true
+                statusText.text = "Enter server details to connect"
+                statusText:setFillColor(0.8, 0.8, 0.8)
+                connectBtn.isVisible = true
+                hideLoadingAnimation()
+                player_id = 0
+                player_vy = 0
+            end
+        end
+    })
+    pauseMenuGroup:insert(quitBtn)
+end
+
+buildPauseMenu()
+
+-- ================= PAUSE REQUEST POPUP =================
+
+local function buildPauseRequestPopup()
+    -- Small panel top-left
+    local panel = display.newRoundedRect(pauseRequestGroup, 175, 55, 330, 100, 12)
+    panel:setFillColor(0.08, 0.1, 0.18, 0.96)
+    panel.strokeWidth = 2
+    panel:setStrokeColor(1, 0.7, 0.1)
+
+    local reqText = display.newText(pauseRequestGroup, "ผู้เล่นอีกคนขอหยุดเกมชั่วคราว", 175, 30, native.systemFontBold, 16)
+    reqText:setFillColor(1, 0.9, 0.3)
+
+    local subText = display.newText(pauseRequestGroup, "ตกลงมั้ย?", 175, 52, native.systemFont, 15)
+    subText:setFillColor(0.9, 0.9, 0.9)
+
+    -- YES button image
+    local yesBtn = display.newImageRect(pauseRequestGroup, "button_yes.png", 100, 42)
+    yesBtn.x = 115
+    yesBtn.y = 82
+    yesBtn:addEventListener("tap", function()
+        if udp then
+            udp:send(json.encode({type = "PAUSE_RESPONSE", accept = true}))
+        end
+        pauseRequestGroup.isVisible = false
+    end)
+
+    -- NO button image
+    local noBtn = display.newImageRect(pauseRequestGroup, "button_no.png", 100, 42)
+    noBtn.x = 235
+    noBtn.y = 82
+    noBtn:addEventListener("tap", function()
+        if udp then
+            udp:send(json.encode({type = "PAUSE_RESPONSE", accept = false}))
+        end
+        pauseRequestGroup.isVisible = false
+    end)
+end
+
+buildPauseRequestPopup()
 
 -- ================= GAME STATE =================
 
 -- Network Download Images and BGM
 local function downloadImages(bgNum, bgmNum)
     local bgStr = "BG" .. tostring(bgNum) .. ".jpg"
-    local bgUrl = "https://raw.githubusercontent.com/meowinwza06/project_game/main/" .. bgStr
-    local p1Url = "https://raw.githubusercontent.com/meowinwza06/project_game/main/CHA12.png"
-    local p2Url = "https://raw.githubusercontent.com/meowinwza06/project_game/main/CHA2.png"
-    
+    local bgUrl = "https://raw.githubusercontent.com/meowinwza06/project_game_Test/main/" .. bgStr
+    local p1Url = "https://raw.githubusercontent.com/meowinwza06/project_game_Test/main/CHA12.png"
+    local p2Url = "https://raw.githubusercontent.com/meowinwza06/project_game_Test/main/CHA2.png"
+
     local bgmStr = tostring(bgmNum) .. ".mp3"
     local bgmUrl = "https://raw.githubusercontent.com/meowinwza06/project_game_Test/main/" .. bgmStr
-    
+
     local imgDir = system.TemporaryDirectory
-    
+
     local function bgmListener(event)
         if not event.isError and STATE == "PLAYING" then
             timer.performWithDelay(2000, function()
@@ -186,39 +475,46 @@ local function downloadImages(bgNum, bgmNum)
     end
     audio.stop(1)
     network.download(bgmUrl, "GET", bgmListener, bgmStr, imgDir)
-    
+
     local function bgListener(event)
-        if not event.isError and STATE == "PLAYING" then
-            if bgImage then bgImage:removeSelf() end
-            -- Make it cover exactly the actual screen bounds
-            bgImage = display.newImage(Groupbg, bgStr, imgDir)
-            if bgImage then
-                bgImage.x, bgImage.y = centerX, centerY
-                bgImage.width, bgImage.height = actualW, actualH
+        if event.phase == "ended" and not event.isError then
+            if STATE == "PLAYING" or STATE == "PAUSED" then
+                if bgImage then bgImage:removeSelf() end
+                bgImage = display.newImage(Groupbg, event.response.filename, event.response.baseDirectory)
+                if bgImage then
+                    bgImage.x = display.contentCenterX
+                    bgImage.y = display.contentCenterY
+                    local scaleRatio = math.max(display.actualContentWidth / bgImage.width, display.actualContentHeight / bgImage.height)
+                    bgImage.xScale = scaleRatio
+                    bgImage.yScale = scaleRatio
+                    bgImage:toBack()
+                end
             end
         end
     end
     network.download(bgUrl, "GET", bgListener, bgStr, imgDir)
 
     local function p1Listener(event)
-        if not event.isError and STATE == "PLAYING" then
-            display.remove(p1Obj)
-            p1Obj = display.newImage(gameGroup, "CHA1.png", imgDir)
-            if p1Obj then
-                p1Obj.width, p1Obj.height = 80, 100
-                p1Obj.x, p1Obj.y = 120, FLOOR_Y - 50
+        if event.phase == "ended" and not event.isError then
+            if STATE == "PLAYING" or STATE == "PAUSED" then
+                display.remove(p1Obj)
+                p1Obj = display.newImageRect(gameGroup, "CHA1.png", imgDir, 240, 300)
+                if p1Obj then
+                    p1Obj.x, p1Obj.y = W * 0.15, FLOOR_Y - 150
+                end
             end
         end
     end
     network.download(p1Url, "GET", p1Listener, "CHA1.png", imgDir)
 
     local function p2Listener(event)
-        if not event.isError and STATE == "PLAYING" then
-            display.remove(p2Obj)
-            p2Obj = display.newImage(gameGroup, "CHA2.png", imgDir)
-            if p2Obj then
-                p2Obj.width, p2Obj.height = 80, 100
-                p2Obj.x, p2Obj.y = W - 120, FLOOR_Y - 50
+        if event.phase == "ended" and not event.isError then
+            if STATE == "PLAYING" or STATE == "PAUSED" then
+                display.remove(p2Obj)
+                p2Obj = display.newImageRect(gameGroup, "CHA2.png", imgDir, 240, 300)
+                if p2Obj then
+                    p2Obj.x, p2Obj.y = W * 0.85, FLOOR_Y - 150
+                end
             end
         end
     end
@@ -226,57 +522,92 @@ local function downloadImages(bgNum, bgmNum)
 end
 
 local function initGameUI(bgNum, bgmNum)
-    -- Draw placeholders until downloaded
-    bgImage = display.newRect(Groupbg, centerX, centerY, actualW, actualH)
-    bgImage:setFillColor(0.3, 0.6, 0.9)
-    
-    -- Outline the game area to clearly show bounds vs letterbox
-    boundsRect = display.newRect(Groupbg, centerX, centerY, actualW, actualH)
-    boundsRect:setFillColor(0, 0, 0, 0)
-    boundsRect.strokeWidth = 0
-    boundsRect:setStrokeColor(1, 1, 1, 0.5)
+    -- Background placeholder explicitly scaled to fill letterbox
+    bgImage = display.newRect(Groupbg, centerX, centerY, actualW + 200, actualH + 200)
+    bgImage:setFillColor(0.2, 0.45, 0.7)
 
     -- Draw net
-    local net = display.newRect(gameGroup, W/2, FLOOR_Y - 60, 12, 120)
+    local net = display.newRect(gameGroup, W/2, FLOOR_Y - 180, 36, 360)
     net:setFillColor(0.9, 0.9, 0.9, 0.9)
     net.strokeWidth = 2
     net:setStrokeColor(0.5, 0.5, 0.5)
-    
-    p1Obj = display.newRect(gameGroup, 120, FLOOR_Y - 50, 80, 100)
+
+    -- Floor line
+    local floor = display.newRect(gameGroup, centerX, FLOOR_Y + 2, 2000, 4)
+    floor:setFillColor(0.5, 0.4, 0.3, 0.8)
+
+    p1Obj = display.newRect(gameGroup, W * 0.15, FLOOR_Y - 150, 240, 300)
     p1Obj:setFillColor(1, 0.5, 0.5)
-    
-    p2Obj = display.newRect(gameGroup, W - 120, FLOOR_Y - 50, 80, 100)
+
+    p2Obj = display.newRect(gameGroup, W * 0.85, FLOOR_Y - 150, 240, 300)
     p2Obj:setFillColor(0.5, 0.5, 1)
-    
+
     -- Ball
-    ballObj = display.newCircle(gameGroup, W/2, 50, 15)
+    ballObj = display.newCircle(gameGroup, W/2, H * 0.1, 70)
     ballObj:setFillColor(1, 0.95, 0)
     ballObj.strokeWidth = 3
     ballObj:setStrokeColor(0.8, 0.5, 0)
-    
-    -- UI texts
-    scoreText, scoreShadow = createTextWithShadow(gameGroup, "0 - 0", W/2, 40, native.systemFontBold, 48, {1, 1, 1})
-    timeText, timeShadow = createTextWithShadow(gameGroup, "Time: 90", W/2, 90, native.systemFontBold, 28, {1, 1, 1})
-    
-    gameoverText, _ = createTextWithShadow(gameGroup, "", W/2, H/2, native.systemFontBold, 64, {1, 0.2, 0.2})
+
+    -- UI texts (score/time on hudGroup so they don't move with gameGroup)
+    scoreText, scoreShadow = createTextWithShadow(hudGroup, "0 - 0", W/2, display.screenOriginY + 65, native.systemFontBold, 64, {1, 1, 1})
+    timeText, timeShadow = createTextWithShadow(hudGroup, "Time: 90", W/2, display.screenOriginY + 135, native.systemFontBold, 36, {1, 1, 1})
+
+    gameoverText, _ = createTextWithShadow(hudGroup, "", W/2, display.contentCenterY, native.systemFontBold, 64, {1, 0.2, 0.2})
     gameoverText.isVisible = false
-    
+
+    -- Shift the game field to the bottom of the device screen
+    gameGroup.y = (display.actualContentHeight + display.screenOriginY) - FLOOR_Y
+
+    -- Pause button (top-right corner)
+    pauseBtn = display.newImageRect(hudGroup, "pause_button.png", 56, 56)
+    pauseBtn.x = actualW/2 - 36
+    pauseBtn.y = -actualH/2 + 36
+    pauseBtn:addEventListener("tap", function()
+        if STATE == "PLAYING" and not pauseMenuVisible then
+            openPauseMenu()
+        elseif pauseMenuVisible then
+            closePauseMenu()
+        end
+    end)
+
     downloadImages(bgNum, bgmNum)
 end
 
 local function startGame(bgNum, bgmNum)
     STATE = "PLAYING"
+    isPaused = false
     menuGroup.isVisible = false
     Groupbg.isVisible = true
     gameGroup.isVisible = true
+    hudGroup.isVisible = true
+    hideLoadingAnimation()
     initGameUI(bgNum, bgmNum)
 end
 
--- Keyboard handling for WASD
+-- Keyboard handling
 local function onKeyEvent( event )
     local keyName = event.keyName
     if event.phase == "down" then
         keys[keyName] = true
+        
+        if keyName == "p" and STATE == "CONNECTING" then
+            if udp then
+                udp:send(json.encode({
+                    type = "FORCE_START",
+                    minX = display.screenOriginX,
+                    maxX = display.contentWidth - display.screenOriginX
+                }))
+            end
+        end
+
+        -- ESC toggles pause menu
+        if keyName == "escape" and (STATE == "PLAYING" or STATE == "PAUSED") then
+            if pauseMenuVisible then
+                closePauseMenu()
+            else
+                openPauseMenu()
+            end
+        end
     elseif event.phase == "up" then
         keys[keyName] = false
     end
@@ -288,13 +619,14 @@ Runtime:addEventListener( "key", onKeyEvent )
 local isDragging = false
 local function onTouch(event)
     if STATE ~= "PLAYING" then return true end
-    
+    if pauseMenuVisible then return true end
+
     local target = nil
     if player_id == 1 then target = p1Obj
     elseif player_id == 2 then target = p2Obj end
-    
+
     if not target then return true end
-    
+
     if event.phase == "began" then
         isDragging = true
         swipe_yStart = event.y
@@ -304,30 +636,30 @@ local function onTouch(event)
     elseif event.phase == "moved" and isDragging then
         -- Only move X with dragging
         target.x = event.x
-        
+
         -- Check swipe up for jump
         if (swipe_yStart - event.y > 60) and not swipe_triggered then
-            -- Jump if on the ground
-            if target.y >= FLOOR_Y - 50 then
-                player_vy = -20
+            if target.y >= FLOOR_Y - 150 then
+                player_vy = -32
                 swipe_triggered = true
             end
         end
-        -- Reset baseline if moving down
         if event.y > swipe_yStart then
             swipe_yStart = event.y
             swipe_triggered = false
         end
 
-        -- Clamp X strictly to game bounds
+        -- Clamp X strictly to screen bounds
+        local minX = display.screenOriginX
+        local maxX = display.contentWidth - display.screenOriginX
         if player_id == 1 then
-            if target.x < 40 then target.x = 40 end
-            if target.x > W/2 - 46 then target.x = W/2 - 46 end
+            if target.x < minX + 120 then target.x = minX + 120 end
+            if target.x > W/2 - 138 then target.x = W/2 - 138 end
         else
-            if target.x < W/2 + 46 then target.x = W/2 + 46 end
-            if target.x > W - 40 then target.x = W - 40 end
+            if target.x < W/2 + 138 then target.x = W/2 + 138 end
+            if target.x > maxX - 120 then target.x = maxX - 120 end
         end
-        
+
     elseif event.phase == "ended" or event.phase == "cancelled" then
         if isDragging then
             display.getCurrentStage():setFocus(nil)
@@ -342,52 +674,50 @@ Runtime:addEventListener("touch", onTouch)
 
 -- Main Loop
 local function update()
-    if STATE == "PLAYING" and player_id > 0 then
+    if STATE == "PLAYING" and not isPaused and player_id > 0 then
         local target = (player_id == 1) and p1Obj or p2Obj
         if target then
-            
+
             -- Horizontal WASD movement
             if not isDragging then
-                local speed = 12 -- Move speed per frame
+                local speed = 14
                 local dx = 0
                 if keys.a or keys.left then dx = -speed end
                 if keys.d or keys.right then dx = speed end
                 target.x = target.x + dx
-                
-                -- Clamp X strictly to game bounds
+
+                local minX = display.screenOriginX
+                local maxX = display.contentWidth - display.screenOriginX
                 if player_id == 1 then
-                    if target.x < 40 then target.x = 40 end
-                    if target.x > W/2 - 46 then target.x = W/2 - 46 end
+                    if target.x < minX + 120 then target.x = minX + 120 end
+                    if target.x > W/2 - 138 then target.x = W/2 - 138 end
                 else
-                    if target.x < W/2 + 46 then target.x = W/2 + 46 end
-                    if target.x > W - 40 then target.x = W - 40 end
+                    if target.x < W/2 + 138 then target.x = W/2 + 138 end
+                    if target.x > maxX - 120 then target.x = maxX - 120 end
                 end
             end
-            
+
             -- Gravity & Jump physics
-            local isGrounded = (target.y >= FLOOR_Y - 50)
-            
+            local isGrounded = (target.y >= FLOOR_Y - 150)
+
             if not isGrounded then
-                player_vy = player_vy + 1.2 -- Gravity
+                player_vy = player_vy + 2.0
             else
                 player_vy = 0
-                target.y = FLOOR_Y - 50
+                target.y = FLOOR_Y - 150
             end
-            
-            -- Jump with W/Up
+
             if (keys.w or keys.up) and isGrounded then
-                player_vy = -22
+                player_vy = -32
             end
-            
+
             target.y = target.y + player_vy
-            
-            -- Floor clamping
-            if target.y > FLOOR_Y - 50 then
-                target.y = FLOOR_Y - 50
+
+            if target.y > FLOOR_Y - 150 then
+                target.y = FLOOR_Y - 150
                 player_vy = 0
             end
-            
-            -- Always send position so jump and movement syncs
+
             local msg = json.encode({ type = "MOVE", x = target.x, y = target.y })
             udp:send(msg)
         end
@@ -396,24 +726,21 @@ local function update()
     if udp then
         while true do
             local data, err = udp:receive()
-            if not data then
-                break
-            end
-            
+            if not data then break end
+
             local msg = json.decode(data)
             if msg then
                 if STATE == "CONNECTING" then
                     if msg.type == "ACCEPTED" then
                         player_id = msg.player_id
-                        statusText.text = "Waiting for Player 2..."
-                        statusText:setFillColor(0.4, 1, 0.4)
                     elseif msg.type == "START" then
                         local bgNum = msg.bg_num or 2
                         local bgmNum = msg.bgm_num or 1
                         startGame(bgNum, bgmNum)
                     end
-                elseif STATE == "PLAYING" then
-                    if msg.type == "STATE" then
+
+                elseif STATE == "PLAYING" or STATE == "PAUSED" then
+                    if msg.type == "STATE" and STATE == "PLAYING" then
                         if ballObj then
                             ballObj.x, ballObj.y = msg.ball.x, msg.ball.y
                         end
@@ -423,34 +750,68 @@ local function update()
                         if p2Obj and (player_id ~= 2) then
                             p2Obj.x, p2Obj.y = msg.p2.x, msg.p2.y
                         end
-                        
+
                         scoreText.text = msg.p1.score .. " - " .. msg.p2.score
                         scoreShadow.text = scoreText.text
                         timeText.text = "Time: " .. msg.time
                         timeShadow.text = timeText.text
+
                     elseif msg.type == "HIT" then
-                        if sfx.pop then
-                            audio.play(sfx.pop)
+                        if sfx.pop then audio.play(sfx.pop) end
+
+                    elseif msg.type == "PAUSE_REQUEST" then
+                        -- Show pause request popup
+                        pauseRequestGroup.isVisible = true
+
+                    elseif msg.type == "PAUSED" then
+                        STATE = "PAUSED"
+                        isPaused = true
+                        -- Show "game paused" notice
+                        if gameoverText then
+                            gameoverText.text = "⏸ เกมหยุดชั่วคราว"
+                            gameoverText:setFillColor(1, 0.9, 0.2)
+                            gameoverText.isVisible = true
                         end
+
+                    elseif msg.type == "RESUMED" then
+                        STATE = "PLAYING"
+                        isPaused = false
+                        if gameoverText then
+                            gameoverText.isVisible = false
+                        end
+
+                    elseif msg.type == "PAUSE_DENIED" then
+                        -- The other player rejected our pause request
+                        if gameoverText then
+                            gameoverText.text = "คำขอถูกปฏิเสธ"
+                            gameoverText:setFillColor(1, 0.3, 0.3)
+                            gameoverText.isVisible = true
+                        end
+                        -- Hide the notice after 2s
+                        timer.performWithDelay(2000, function()
+                            if gameoverText then gameoverText.isVisible = false end
+                        end)
+
                     elseif msg.type == "GAMEOVER" then
                         STATE = "GAMEOVER"
-                        audio.stop(1) -- Stop BGM
+                        audio.stop(1)
                         timeText.text = "Time: 0"
                         timeShadow.text = "Time: 0"
-                        
+
                         local winStr = ""
-                        if msg.winner == 0 then 
-                            winStr = "DRAW!" 
-                        else 
-                            winStr = "PLAYER " .. msg.winner .. " WINS!" 
+                        if msg.winner == 0 then
+                            winStr = "DRAW!"
+                        else
+                            winStr = "PLAYER " .. msg.winner .. " WINS!"
                             if msg.winner == player_id then
                                 if sfx.win then audio.play(sfx.win) end
                             else
                                 if sfx.lose then audio.play(sfx.lose) end
                             end
                         end
-                        
+
                         gameoverText.text = winStr
+                        gameoverText:setFillColor(1, 0.2, 0.2)
                         gameoverText.isVisible = true
                     end
                 end
