@@ -188,23 +188,46 @@ while True:
         # Net collision
         net_x = WIDTH / 2
         net_top = FLOOR_Y - NET_HEIGHT
-        net_y = FLOOR_Y - NET_HEIGHT / 2
         
-        closest_x = max(net_x - NET_WIDTH/2, min(ball_next_x, net_x + NET_WIDTH/2))
-        closest_y = max(net_top, min(ball_next_y, FLOOR_Y))
+        rect_left = net_x - NET_WIDTH/2
+        rect_right = net_x + NET_WIDTH/2
+        rect_top = net_top
+        rect_bottom = FLOOR_Y
         
-        c_dx = ball_next_x - closest_x
-        c_dy = ball_next_y - closest_y
+        bx, by = ball_next_x, ball_next_y
+        cx = max(rect_left, min(bx, rect_right))
+        cy = max(rect_top, min(by, rect_bottom))
+        
+        c_dx = bx - cx
+        c_dy = by - cy
         dist_sq = c_dx**2 + c_dy**2
         
         if dist_sq < BALL_RADIUS**2:
             if dist_sq == 0:
-                nx, ny, dist = 0, -1, 0.1
+                dist_left = bx - rect_left
+                dist_right = rect_right - bx
+                dist_top = by - rect_top
+                dist_bottom = rect_bottom - by
+                
+                min_dist = min(dist_left, dist_right, dist_top, dist_bottom)
+                
+                if min_dist == dist_left:
+                    nx, ny = -1, 0
+                    pen = BALL_RADIUS + dist_left
+                elif min_dist == dist_right:
+                    nx, ny = 1, 0
+                    pen = BALL_RADIUS + dist_right
+                elif min_dist == dist_top:
+                    nx, ny = 0, -1
+                    pen = BALL_RADIUS + dist_top
+                else:
+                    nx, ny = 0, 1
+                    pen = BALL_RADIUS + dist_bottom
             else:
                 dist = dist_sq ** 0.5
                 nx, ny = c_dx / dist, c_dy / dist
+                pen = BALL_RADIUS - dist
                 
-            pen = BALL_RADIUS - dist
             ball_next_x += nx * pen
             ball_next_y += ny * pen
             
