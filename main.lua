@@ -39,7 +39,7 @@ local FLOOR_Y = 500  -- Match server physics
 -- Game state
 local STATE = "MENU"
 local udp = nil
-local server_ip = "[IP_ADDRESS]"
+local server_ip = ""
 local server_port = 5555
 local player_id = 0
 local isPaused = false
