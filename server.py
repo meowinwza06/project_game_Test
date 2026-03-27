@@ -12,8 +12,9 @@ sock.setblocking(False)
 
 print(f"UDP Server up and listening on {HOST}:{PORT}")
 
-state = "LOBBY"  # LOBBY / PLAYING / PAUSED / GAMEOVER
+state = "LOBBY"  # LOBBY / PLAYING / PAUSED / RESUMING / GAMEOVER
 clients = [] 
+resume_timer = 0 
 bound_min_x = 0
 bound_max_x = 1000
 
@@ -118,13 +119,30 @@ while True:
                             sock.sendto(json.dumps({"type": "PAUSE_DENIED"}).encode('utf-8'), clients[other_idx])
 
             elif msg["type"] == "RESUME" and state == "PAUSED":
-                state = "PLAYING"
-                last_time = time.time()  # reset dt to avoid time jump
-                send_to_all({"type": "RESUMED"})
+                state = "RESUMING"
+                resume_timer = 3.99
+                sock.last_count = 3
+                send_to_all({"type": "RESUME_COUNTDOWN", "count": 3})
         except (BlockingIOError, Exception):
             break
 
     # Update Game State
+    if state == "RESUMING":
+        resume_timer -= dt
+        count = int(resume_timer)
+        if count > 0 and count != getattr(sock, 'last_count', 0):
+            send_to_all({"type": "RESUME_COUNTDOWN", "count": count})
+            sock.last_count = count
+            
+        if resume_timer <= 0:
+            state = "PLAYING"
+            last_time = time.time()
+            send_to_all({"type": "RESUMED"})
+        else:
+            last_time = now
+            time.sleep(1/60)
+            continue
+
     if state == "PAUSED":
         last_time = now  # keep resetting so dt doesn't accumulate
         time.sleep(1/60)

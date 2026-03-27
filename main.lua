@@ -78,6 +78,7 @@ local timeText
 local timeShadow
 local statusText
 local gameoverText
+local gameoverShadow
 local pauseBtn
 local ipBg
 local portBg
@@ -304,29 +305,29 @@ local function buildPauseMenu()
     overlay:setFillColor(0, 0, 0, 0.7)
 
     -- Menu panel
-    local panel = display.newRoundedRect(pauseMenuGroup, centerX, centerY, 340, 280, 16)
+    local panel = display.newRoundedRect(pauseMenuGroup, centerX, centerY, 460, 360, 20)
     panel:setFillColor(0.1, 0.13, 0.2, 0.97)
-    panel.strokeWidth = 2
+    panel.strokeWidth = 3
     panel:setStrokeColor(0.3, 0.5, 0.9)
 
     -- Title
-    local pauseTitle = display.newText(pauseMenuGroup, "⏸  PAUSED", centerX, centerY - 95, native.systemFontBold, 28)
+    local pauseTitle = display.newText(pauseMenuGroup, "⏸  PAUSED", centerX, centerY - 130, native.systemFontBold, 36)
     pauseTitle:setFillColor(1, 0.85, 0.2)
 
     -- Separator line
-    local sep = display.newRect(pauseMenuGroup, centerX, centerY - 63, 280, 2)
+    local sep = display.newRect(pauseMenuGroup, centerX, centerY - 90, 400, 3)
     sep:setFillColor(0.3, 0.5, 0.9, 0.5)
 
     -- Button: หยุดเกมชั่วคราว
     local reqPauseBtn = widget.newButton({
         x = centerX,
-        y = centerY - 28,
+        y = centerY - 35,
         label = "⏸  ขอหยุดเกมชั่วคราว",
         font = native.systemFontBold,
-        fontSize = 20,
+        fontSize = 26,
         shape = "roundedRect",
-        width = 280, height = 50,
-        cornerRadius = 8,
+        width = 380, height = 64,
+        cornerRadius = 12,
         fillColor = { default={0.15, 0.45, 0.85, 1}, over={0.1, 0.3, 0.65, 1} },
         labelColor = { default={1,1,1}, over={0.8,0.8,0.8} },
         onEvent = function(e)
@@ -343,17 +344,20 @@ local function buildPauseMenu()
     -- Button: กลับเข้าเกม
     local resumeBtn = widget.newButton({
         x = centerX,
-        y = centerY + 32,
+        y = centerY + 45,
         label = "▶  กลับเข้าเกม",
         font = native.systemFontBold,
-        fontSize = 20,
+        fontSize = 26,
         shape = "roundedRect",
-        width = 280, height = 50,
-        cornerRadius = 8,
+        width = 380, height = 64,
+        cornerRadius = 12,
         fillColor = { default={0.15, 0.65, 0.25, 1}, over={0.1, 0.45, 0.15, 1} },
         labelColor = { default={1,1,1}, over={0.8,0.8,0.8} },
         onEvent = function(e)
             if e.phase == "ended" then
+                if udp and STATE == "PAUSED" then
+                    udp:send(json.encode({type = "RESUME"}))
+                end
                 closePauseMenu()
             end
         end
@@ -363,13 +367,13 @@ local function buildPauseMenu()
     -- Button: ออกจากเกม
     local quitBtn = widget.newButton({
         x = centerX,
-        y = centerY + 92,
+        y = centerY + 125,
         label = "✕  ออกจากเกม",
         font = native.systemFontBold,
-        fontSize = 20,
+        fontSize = 26,
         shape = "roundedRect",
-        width = 280, height = 50,
-        cornerRadius = 8,
+        width = 380, height = 64,
+        cornerRadius = 12,
         fillColor = { default={0.65, 0.15, 0.15, 1}, over={0.45, 0.1, 0.1, 1} },
         labelColor = { default={1,1,1}, over={0.8,0.8,0.8} },
         onEvent = function(e)
@@ -409,22 +413,22 @@ buildPauseMenu()
 -- ================= PAUSE REQUEST POPUP =================
 
 local function buildPauseRequestPopup()
-    -- Small panel top-left
-    local panel = display.newRoundedRect(pauseRequestGroup, 175, 55, 330, 100, 12)
+    -- Centered, larger panel
+    local panel = display.newRoundedRect(pauseRequestGroup, centerX, 120, 500, 160, 16)
     panel:setFillColor(0.08, 0.1, 0.18, 0.96)
-    panel.strokeWidth = 2
+    panel.strokeWidth = 3
     panel:setStrokeColor(1, 0.7, 0.1)
 
-    local reqText = display.newText(pauseRequestGroup, "ผู้เล่นอีกคนขอหยุดเกมชั่วคราว", 175, 30, native.systemFontBold, 16)
+    local reqText = display.newText(pauseRequestGroup, "ผู้เล่นอีกคนขอหยุดเกมชั่วคราว", centerX, 70, native.systemFontBold, 26)
     reqText:setFillColor(1, 0.9, 0.3)
 
-    local subText = display.newText(pauseRequestGroup, "ตกลงมั้ย?", 175, 52, native.systemFont, 15)
+    local subText = display.newText(pauseRequestGroup, "ตกลงมั้ย?", centerX, 110, native.systemFont, 22)
     subText:setFillColor(0.9, 0.9, 0.9)
 
     -- YES button image
-    local yesBtn = display.newImageRect(pauseRequestGroup, "button_yes.png", 100, 42)
-    yesBtn.x = 115
-    yesBtn.y = 82
+    local yesBtn = display.newImageRect(pauseRequestGroup, "button_yes.png", 150, 63)
+    yesBtn.x = centerX - 100
+    yesBtn.y = 160
     yesBtn:addEventListener("tap", function()
         if udp then
             udp:send(json.encode({type = "PAUSE_RESPONSE", accept = true}))
@@ -433,9 +437,9 @@ local function buildPauseRequestPopup()
     end)
 
     -- NO button image
-    local noBtn = display.newImageRect(pauseRequestGroup, "button_no.png", 100, 42)
-    noBtn.x = 235
-    noBtn.y = 82
+    local noBtn = display.newImageRect(pauseRequestGroup, "button_no.png", 150, 63)
+    noBtn.x = centerX + 100
+    noBtn.y = 160
     noBtn:addEventListener("tap", function()
         if udp then
             udp:send(json.encode({type = "PAUSE_RESPONSE", accept = false}))
@@ -552,8 +556,9 @@ local function initGameUI(bgNum, bgmNum)
     scoreText, scoreShadow = createTextWithShadow(hudGroup, "0 - 0", W/2, display.screenOriginY + 65, native.systemFontBold, 64, {1, 1, 1})
     timeText, timeShadow = createTextWithShadow(hudGroup, "Time: 90", W/2, display.screenOriginY + 135, native.systemFontBold, 36, {1, 1, 1})
 
-    gameoverText, _ = createTextWithShadow(hudGroup, "", W/2, display.contentCenterY, native.systemFontBold, 64, {1, 0.2, 0.2})
+    gameoverText, gameoverShadow = createTextWithShadow(hudGroup, "", W/2, display.contentCenterY, native.systemFontBold, 64, {1, 0.2, 0.2})
     gameoverText.isVisible = false
+    gameoverShadow.isVisible = false
 
     -- Shift the game field to the bottom of the device screen
     gameGroup.y = (display.actualContentHeight + display.screenOriginY) - FLOOR_Y
@@ -563,7 +568,9 @@ local function initGameUI(bgNum, bgmNum)
     pauseBtn.x = actualW/2 - 36
     pauseBtn.y = -actualH/2 + 36
     pauseBtn:addEventListener("tap", function()
-        if STATE == "PLAYING" and not pauseMenuVisible then
+        if STATE == "PAUSED" then
+            if udp then udp:send(json.encode({type = "RESUME"})) end
+        elseif STATE == "PLAYING" and not pauseMenuVisible then
             openPauseMenu()
         elseif pauseMenuVisible then
             closePauseMenu()
@@ -768,9 +775,32 @@ local function update()
                         isPaused = true
                         -- Show "game paused" notice
                         if gameoverText then
-                            gameoverText.text = "⏸ เกมหยุดชั่วคราว"
+                            gameoverText.text = "⏸ เกมหยุดชั่วคราว\n(กดปุ่มหยุดเกมอีกครั้งเพื่อเริ่มเกมใหม่)"
+                            gameoverShadow.text = gameoverText.text
+                            gameoverText.size = 50
+                            gameoverShadow.size = 50
+                            gameoverText.xScale = 1; gameoverText.yScale = 1
+                            gameoverShadow.xScale = 1; gameoverShadow.yScale = 1
                             gameoverText:setFillColor(1, 0.9, 0.2)
                             gameoverText.isVisible = true
+                            gameoverShadow.isVisible = true
+                        end
+
+                    elseif msg.type == "RESUME_COUNTDOWN" then
+                        if gameoverText then
+                            gameoverText.text = tostring(msg.count)
+                            gameoverShadow.text = gameoverText.text
+                            gameoverText.size = 120
+                            gameoverShadow.size = 120
+                            gameoverText:setFillColor(1, 1, 1)
+                            gameoverText.isVisible = true
+                            gameoverShadow.isVisible = true
+                            
+                            -- Animate
+                            gameoverText.xScale = 1.6; gameoverText.yScale = 1.6
+                            gameoverShadow.xScale = 1.6; gameoverShadow.yScale = 1.6
+                            transition.to(gameoverText, {time=200, xScale=1.0, yScale=1.0, transition=easing.outElastic})
+                            transition.to(gameoverShadow, {time=200, xScale=1.0, yScale=1.0, transition=easing.outElastic})
                         end
 
                     elseif msg.type == "RESUMED" then
@@ -778,18 +808,26 @@ local function update()
                         isPaused = false
                         if gameoverText then
                             gameoverText.isVisible = false
+                            gameoverShadow.isVisible = false
+                            gameoverText.size = 64
+                            gameoverShadow.size = 64
                         end
 
                     elseif msg.type == "PAUSE_DENIED" then
                         -- The other player rejected our pause request
                         if gameoverText then
                             gameoverText.text = "คำขอถูกปฏิเสธ"
+                            gameoverShadow.text = gameoverText.text
                             gameoverText:setFillColor(1, 0.3, 0.3)
                             gameoverText.isVisible = true
+                            gameoverShadow.isVisible = true
                         end
                         -- Hide the notice after 2s
                         timer.performWithDelay(2000, function()
-                            if gameoverText then gameoverText.isVisible = false end
+                            if gameoverText and STATE == "PLAYING" then 
+                                gameoverText.isVisible = false 
+                                gameoverShadow.isVisible = false
+                            end
                         end)
 
                     elseif msg.type == "GAMEOVER" then
