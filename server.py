@@ -13,35 +13,15 @@ sock.setblocking(False)
 print(f"UDP Server up and listening on {HOST}:{PORT}")
 
 state = "LOBBY"  # LOBBY / PLAYING / PAUSED / RESUMING / GAMEOVER
-clients = [] 
-resume_timer = 0 
-bound_min_x = 0
-bound_max_x = 1000
+clients = []
+resume_timer = 0
 
-# Game Constants
-WIDTH = 1000
-HEIGHT = 500
-FLOOR_Y = 500
-BALL_RADIUS = 70
-P_WIDTH = 120
-P_HEIGHT = 260
-NET_HEIGHT = 360
-NET_WIDTH = 36
-
-# Physics state
-ball = {"x": WIDTH/2, "y": 50, "vx": 0, "vy": 0, "reset_timer": 0, "scored": False}
-p1 = {"x": 150, "y": FLOOR_Y - P_HEIGHT/2, "score": 0, "w": P_WIDTH, "h": P_HEIGHT}
-p2 = {"x": WIDTH - 150, "y": FLOOR_Y - P_HEIGHT/2, "score": 0, "w": P_WIDTH, "h": P_HEIGHT}
+# Player state (only positions and scores; physics runs in client P1)
+p1 = {"x": 150, "y": 430, "score": 0}
+p2 = {"x": 850, "y": 430, "score": 0}
+ball = {"x": 500, "y": 50}   # updated by P1 each frame via BALL_POS
 game_time = 90
 last_time = time.time()
-
-def reset_ball(scorer):
-    ball["x"] = WIDTH/2
-    ball["y"] = 50
-    ball["vx"] = random.choice([-300, 300]) 
-    ball["vy"] = -50
-    ball["reset_timer"] = 0
-    ball["scored"] = False
 
 def send_to_all(msg_dict):
     try:
@@ -51,13 +31,6 @@ def send_to_all(msg_dict):
     except Exception:
         pass
 
-def check_collision(px, py, pw, ph, bx, by, br):
-    closest_x = max(px - pw/2, min(bx, px + pw/2))
-    closest_y = max(py - ph/2, min(by, py + ph/2))
-    dx = bx - closest_x
-    dy = by - closest_y
-    return (dx**2 + dy**2) < (br**2)
-
 while True:
     now = time.time()
     dt = now - last_time
@@ -66,9 +39,9 @@ while True:
     # Process messages
     while True:
         try:
-            data, addr = sock.recvfrom(1024)
+            data, addr = sock.recvfrom(2048)
             msg = json.loads(data.decode('utf-8'))
-            
+
             if msg["type"] == "JOIN":
                 if addr not in clients and len(clients) < 2:
                     clients.append(addr)
@@ -77,29 +50,47 @@ while True:
                     if len(clients) == 2:
                         state = "PLAYING"
                         game_time = 90
-                        bound_min_x = msg.get("minX", 0)
-                        bound_max_x = msg.get("maxX", WIDTH)
                         p1["score"], p2["score"] = 0, 0
-                        reset_ball(1)
+                        ball["x"], ball["y"] = 500, 50
                         send_to_all({"type": "START", "time": game_time, "bg_num": random.randint(1,4), "bgm_num": random.randint(1,3)})
-            
+
             elif msg["type"] == "FORCE_START" and state == "LOBBY":
                 if addr in clients:
                     state = "PLAYING"
                     game_time = 90
-                    bound_min_x = msg.get("minX", 0)
-                    bound_max_x = msg.get("maxX", WIDTH)
                     p1["score"], p2["score"] = 0, 0
-                    reset_ball(1)
+                    ball["x"], ball["y"] = 500, 50
                     send_to_all({"type": "START", "time": game_time, "bg_num": random.randint(1,4), "bgm_num": random.randint(1,3)})
 
-            elif msg["type"] == "MOVE" and state == "PLAYING":
+            elif msg["type"] == "MOVE" and state in ("PLAYING", "PAUSED"):
                 if addr in clients:
                     pid = clients.index(addr) + 1
                     if pid == 1:
                         p1["x"], p1["y"] = msg.get("x", p1["x"]), msg.get("y", p1["y"])
                     elif pid == 2:
                         p2["x"], p2["y"] = msg.get("x", p2["x"]), msg.get("y", p2["y"])
+
+            elif msg["type"] == "BALL_POS" and state == "PLAYING":
+                # Only P1 sends ball positions
+                if addr in clients and clients.index(addr) == 0:
+                    ball["x"] = msg.get("x", ball["x"])
+                    ball["y"] = msg.get("y", ball["y"])
+
+            elif msg["type"] == "SCORE" and state == "PLAYING":
+                # P1 reports who scored
+                if addr in clients and clients.index(addr) == 0:
+                    scorer = msg.get("scorer", 0)
+                    if scorer == 1:
+                        p1["score"] += 1
+                    elif scorer == 2:
+                        p2["score"] += 1
+                    # Tell clients to reset ball (P1 will restart local ball physics)
+                    send_to_all({
+                        "type": "SCORE_UPDATE",
+                        "p1_score": p1["score"],
+                        "p2_score": p2["score"],
+                        "scorer": scorer
+                    })
 
             elif msg["type"] == "PAUSE_REQUEST" and state == "PLAYING":
                 if addr in clients:
@@ -123,6 +114,7 @@ while True:
                 resume_timer = 3.99
                 sock.last_count = 3
                 send_to_all({"type": "RESUME_COUNTDOWN", "count": 3})
+
         except (BlockingIOError, Exception):
             break
 
@@ -133,7 +125,6 @@ while True:
         if count > 0 and count != getattr(sock, 'last_count', 0):
             send_to_all({"type": "RESUME_COUNTDOWN", "count": count})
             sock.last_count = count
-            
         if resume_timer <= 0:
             state = "PLAYING"
             last_time = time.time()
@@ -144,7 +135,7 @@ while True:
             continue
 
     if state == "PAUSED":
-        last_time = now  # keep resetting so dt doesn't accumulate
+        last_time = now
         time.sleep(1/60)
         continue
 
@@ -156,101 +147,8 @@ while True:
             send_to_all({"type": "GAMEOVER", "winner": winner})
             clients = []
             continue
-            
-        if ball.get("reset_timer", 0) > 0:
-            ball["reset_timer"] -= dt
-            if ball["reset_timer"] <= 0:
-                reset_ball(1)
-        
-        # --- Physics Loop (ต้องอยู่ตรงนี้เพื่อให้บอลขยับตลอด) ---
-        ball_next_x = ball["x"] + ball["vx"] * dt
-        ball_next_y = ball["y"] + ball["vy"] * dt
-        ball["vy"] += 600 * dt # Gravity
 
-        # Wall collisions
-        if ball_next_x - BALL_RADIUS < bound_min_x:
-            ball["vx"] *= -0.8
-            ball_next_x = bound_min_x + BALL_RADIUS # ป้องกันบอลทะลุ
-        elif ball_next_x + BALL_RADIUS > bound_max_x:
-            ball["vx"] *= -0.8
-            ball_next_x = bound_max_x - BALL_RADIUS # ป้องกันบอลทะลุ
-
-        # Floor/Score
-        if ball_next_y + BALL_RADIUS >= FLOOR_Y:
-            ball_next_y = FLOOR_Y - BALL_RADIUS
-            ball["vy"] *= -0.7
-            if not ball["scored"]:
-                ball["scored"] = True
-                ball["reset_timer"] = 1.5
-                if ball_next_x < WIDTH / 2: p2["score"] += 1
-                else: p1["score"] += 1
-
-        # Net collision
-        net_x = WIDTH / 2
-        net_top = FLOOR_Y - NET_HEIGHT
-        
-        rect_left = net_x - NET_WIDTH/2
-        rect_right = net_x + NET_WIDTH/2
-        rect_top = net_top
-        rect_bottom = FLOOR_Y
-        
-        bx, by = ball_next_x, ball_next_y
-        cx = max(rect_left, min(bx, rect_right))
-        cy = max(rect_top, min(by, rect_bottom))
-        
-        c_dx = bx - cx
-        c_dy = by - cy
-        dist_sq = c_dx**2 + c_dy**2
-        
-        if dist_sq < BALL_RADIUS**2:
-            if dist_sq == 0:
-                dist_left = bx - rect_left
-                dist_right = rect_right - bx
-                dist_top = by - rect_top
-                dist_bottom = rect_bottom - by
-                
-                min_dist = min(dist_left, dist_right, dist_top, dist_bottom)
-                
-                if min_dist == dist_left:
-                    nx, ny = -1, 0
-                    pen = BALL_RADIUS + dist_left
-                elif min_dist == dist_right:
-                    nx, ny = 1, 0
-                    pen = BALL_RADIUS + dist_right
-                elif min_dist == dist_top:
-                    nx, ny = 0, -1
-                    pen = BALL_RADIUS + dist_top
-                else:
-                    nx, ny = 0, 1
-                    pen = BALL_RADIUS + dist_bottom
-            else:
-                dist = dist_sq ** 0.5
-                nx, ny = c_dx / dist, c_dy / dist
-                pen = BALL_RADIUS - dist
-                
-            ball_next_x += nx * pen
-            ball_next_y += ny * pen
-            
-            dot = ball["vx"] * nx + ball["vy"] * ny
-            if dot < 0:
-                res = 0.75
-                ball["vx"] -= (1 + res) * dot * nx
-                ball["vy"] -= (1 + res) * dot * ny
-
-        # Player collisions
-        hit = False
-        if check_collision(p1["x"], p1["y"], p1["w"], p1["h"], ball_next_x, ball_next_y, BALL_RADIUS):
-            ball["vy"], ball["vx"] = -450, (ball_next_x - p1["x"]) * 7
-            hit = True
-        elif check_collision(p2["x"], p2["y"], p2["w"], p2["h"], ball_next_x, ball_next_y, BALL_RADIUS):
-            ball["vy"], ball["vx"] = -450, (ball_next_x - p2["x"]) * 7
-            hit = True
-        
-        if hit: send_to_all({"type": "HIT"})
-
-        ball["x"], ball["y"] = ball_next_x, ball_next_y
-        
-        # Broadcast STATE
+        # Broadcast state (ball position comes from P1 client)
         send_to_all({
             "type": "STATE",
             "ball": {"x": int(ball["x"]), "y": int(ball["y"])},

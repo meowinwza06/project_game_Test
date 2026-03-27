@@ -34,7 +34,7 @@ local centerY = display.contentCenterY
 
 local W = display.contentWidth
 local H = display.contentHeight
-local FLOOR_Y = 500  -- Match server physics
+local FLOOR_Y = 500  -- floor at screen bottom edge
 
 -- Game state
 local STATE = "MENU"
@@ -50,6 +50,17 @@ local keys = { w=false, a=false, s=false, d=false, up=false, down=false, left=fa
 local player_vy = 0
 local swipe_yStart = 0
 local swipe_triggered = false
+
+-- Client-side ball physics (P1 is authoritative)
+local BALL_R     = 70    -- must match visual circle radius
+local NET_W      = 80    -- must match visual net width
+local NET_H      = 340   -- must match visual net height
+local ball_x     = 500
+local ball_y     = 50
+local ball_vx    = 300
+local ball_vy    = -50
+local ball_last_t = system.getTimer()
+local ball_scored = false  -- throttle sending SCORE once per landing
 
 -- Display groups
 local Groupbg = display.newGroup()
@@ -72,6 +83,7 @@ local bgImage
 local p1Obj
 local p2Obj
 local ballObj
+local netObj
 local scoreText
 local scoreShadow
 local timeText
@@ -523,6 +535,26 @@ local function downloadImages(bgNum, bgmNum)
         end
     end
     network.download(p2Url, "GET", p2Listener, "CHA2.png", imgDir)
+
+    local txUrl = "https://raw.githubusercontent.com/meowinwza06/project_game_Test/main/Tx.png"
+    local function txListener(event)
+        if event.phase == "ended" and not event.isError then
+            if STATE == "PLAYING" or STATE == "PAUSED" then
+                -- Remove the placeholder / previous net
+                if netObj then display.remove(netObj); netObj = nil end
+                -- Create properly-sized image
+                local img = display.newImageRect(gameGroup, "Tx.png", imgDir, 80, 340)
+                if img then
+                    img.anchorX = 0.5
+                    img.anchorY = 1
+                    img.x = W / 2
+                    img.y = FLOOR_Y
+                    netObj = img
+                end
+            end
+        end
+    end
+    network.download(txUrl, "GET", txListener, "Tx.png", imgDir)
 end
 
 local function initGameUI(bgNum, bgmNum)
@@ -530,11 +562,12 @@ local function initGameUI(bgNum, bgmNum)
     bgImage = display.newRect(Groupbg, centerX, centerY, actualW + 200, actualH + 200)
     bgImage:setFillColor(0.2, 0.45, 0.7)
 
-    -- Draw net
-    local net = display.newRect(gameGroup, W/2, FLOOR_Y - 180, 36, 360)
-    net:setFillColor(0.9, 0.9, 0.9, 0.9)
-    net.strokeWidth = 2
-    net:setStrokeColor(0.5, 0.5, 0.5)
+    -- Net placeholder rect (replaced by Tx.png once downloaded)
+    local netPlaceholder = display.newRect(gameGroup, W/2, FLOOR_Y, 80, 340)
+    netPlaceholder.anchorY = 1
+    netPlaceholder:setFillColor(0.9, 0.9, 0.9, 0.3)
+    netPlaceholder.strokeWidth = 0
+    netObj = netPlaceholder  -- so txListener can reference & remove it
 
     -- Floor line
     local floor = display.newRect(gameGroup, centerX, FLOOR_Y + 2, 2000, 4)
@@ -560,7 +593,7 @@ local function initGameUI(bgNum, bgmNum)
     gameoverText.isVisible = false
     gameoverShadow.isVisible = false
 
-    -- Shift the game field to the bottom of the device screen
+    -- Push gameGroup down so FLOOR_Y aligns with the actual device screen bottom
     gameGroup.y = (display.actualContentHeight + display.screenOriginY) - FLOOR_Y
 
     -- Pause button (top-right corner)
@@ -695,12 +728,14 @@ local function update()
 
                 local minX = display.screenOriginX
                 local maxX = display.contentWidth - display.screenOriginX
+                local halfPlayer = 60  -- half of player width 120
+                local halfNet = 8     -- half of NET_WIDTH 16
                 if player_id == 1 then
-                    if target.x < minX + 60 then target.x = minX + 60 end
-                    if target.x > W/2 - 78 then target.x = W/2 - 78 end
+                    if target.x < minX + halfPlayer then target.x = minX + halfPlayer end
+                    if target.x > W/2 - halfNet - halfPlayer then target.x = W/2 - halfNet - halfPlayer end
                 else
-                    if target.x < W/2 + 78 then target.x = W/2 + 78 end
-                    if target.x > maxX - 60 then target.x = maxX - 60 end
+                    if target.x < W/2 + halfNet + halfPlayer then target.x = W/2 + halfNet + halfPlayer end
+                    if target.x > maxX - halfPlayer then target.x = maxX - halfPlayer end
                 end
             end
 
@@ -730,6 +765,115 @@ local function update()
         end
     end
 
+    -- Ball physics (only P1 runs this)
+    if STATE == "PLAYING" and player_id == 1 and not isPaused and udp then
+        local now_t = system.getTimer()
+        local dt    = (now_t - ball_last_t) / 1000  -- convert ms to seconds
+        if dt > 0.05 then dt = 0.05 end  -- cap to avoid tunneling on lag
+        ball_last_t = now_t
+
+        local minX = display.screenOriginX
+        local maxX = display.contentWidth - display.screenOriginX
+
+        -- Gravity
+        ball_vy = ball_vy + 900 * dt
+
+        local prev_bx = ball_x
+        local prev_by = ball_y
+        ball_x = ball_x + ball_vx * dt
+        ball_y = ball_y + ball_vy * dt
+
+        -- Left/Right walls
+        if ball_x - BALL_R < minX then
+            ball_x = minX + BALL_R
+            ball_vx = math.abs(ball_vx) * 0.85
+        elseif ball_x + BALL_R > maxX then
+            ball_x = maxX - BALL_R
+            ball_vx = -math.abs(ball_vx) * 0.85
+        end
+
+        -- Net collision (CCD)
+        local net_cx = W / 2
+        local net_L  = net_cx - NET_W / 2
+        local net_R  = net_cx + NET_W / 2
+        local net_top = FLOOR_Y - NET_H
+
+        -- From left
+        if prev_bx + BALL_R <= net_L and ball_x + BALL_R > net_L then
+            if ball_y + BALL_R > net_top and ball_y - BALL_R < FLOOR_Y then
+                ball_x = net_L - BALL_R
+                ball_vx = -math.abs(ball_vx) * 0.85
+            end
+        -- From right
+        elseif prev_bx - BALL_R >= net_R and ball_x - BALL_R < net_R then
+            if ball_y + BALL_R > net_top and ball_y - BALL_R < FLOOR_Y then
+                ball_x = net_R + BALL_R
+                ball_vx = math.abs(ball_vx) * 0.85
+            end
+        -- Hit top of net
+        elseif ball_x > net_L and ball_x < net_R then
+            if prev_by - BALL_R >= net_top and ball_y - BALL_R < net_top then
+                ball_y = net_top - BALL_R
+                ball_vy = -math.abs(ball_vy) * 0.75
+            end
+        end
+
+        -- Player 1 collision (self)
+        if p1Obj then
+            local pdx = ball_x - p1Obj.x
+            local pdy = ball_y - p1Obj.y
+            local hw, hh = 60, 150
+            if math.abs(pdx) < hw + BALL_R and math.abs(pdy) < hh + BALL_R then
+                ball_vy = -math.abs(ball_vy + 300)
+                ball_vx = pdx * 6
+                if sfx and sfx.pop then audio.play(sfx.pop) end
+            end
+        end
+
+        -- Player 2 collision (received position from server)
+        if p2Obj then
+            local pdx = ball_x - p2Obj.x
+            local pdy = ball_y - p2Obj.y
+            local hw, hh = 60, 150
+            if math.abs(pdx) < hw + BALL_R and math.abs(pdy) < hh + BALL_R then
+                ball_vy = -math.abs(ball_vy + 300)
+                ball_vx = pdx * 6
+                if sfx and sfx.pop then audio.play(sfx.pop) end
+            end
+        end
+
+        -- Floor / Scoring
+        if ball_y + BALL_R >= FLOOR_Y then
+            if not ball_scored then
+                ball_scored = true
+                local scorer = (ball_x < W / 2) and 2 or 1  -- who scored
+                udp:send(json.encode({ type = "SCORE", scorer = scorer }))
+                -- Delay reset so both clients see the landing
+                timer.performWithDelay(1200, function()
+                    ball_x = W / 2
+                    ball_y = 80
+                    ball_vx = (math.random(0,1) == 0) and 350 or -350
+                    ball_vy = -100
+                    ball_scored = false
+                end)
+            end
+            -- Bounce on floor softly while waiting for reset
+            if ball_y + BALL_R > FLOOR_Y then
+                ball_y = FLOOR_Y - BALL_R
+                ball_vy = -math.abs(ball_vy) * 0.5
+            end
+        end
+
+        -- Update visual
+        if ballObj then
+            ballObj.x = ball_x
+            ballObj.y = ball_y
+        end
+
+        -- Send ball position to server (relayed to P2)
+        udp:send(json.encode({ type = "BALL_POS", x = ball_x, y = ball_y }))
+    end
+
     if udp then
         while true do
             local data, err = udp:receive()
@@ -748,8 +892,10 @@ local function update()
 
                 elseif STATE == "PLAYING" or STATE == "PAUSED" then
                     if msg.type == "STATE" and STATE == "PLAYING" then
-                        if ballObj then
-                            ballObj.x, ballObj.y = msg.ball.x, msg.ball.y
+                        -- Ball position: P2 reads from server relay; P1 ignores (runs local physics)
+                        if ballObj and player_id ~= 1 then
+                            ballObj.x = msg.ball.x
+                            ballObj.y = msg.ball.y
                         end
                         if p1Obj and (player_id ~= 1) then
                             p1Obj.x, p1Obj.y = msg.p1.x, msg.p1.y
@@ -762,6 +908,12 @@ local function update()
                         scoreShadow.text = scoreText.text
                         timeText.text = "Time: " .. msg.time
                         timeShadow.text = timeText.text
+
+                    elseif msg.type == "SCORE_UPDATE" then
+                        -- Server confirmed score; update display
+                        scoreText.text = msg.p1_score .. " - " .. msg.p2_score
+                        scoreShadow.text = scoreText.text
+                        if sfx and sfx.pop then audio.play(sfx.pop) end
 
                     elseif msg.type == "HIT" then
                         if sfx.pop then audio.play(sfx.pop) end
@@ -851,6 +1003,54 @@ local function update()
                         gameoverText.text = winStr
                         gameoverText:setFillColor(1, 0.2, 0.2)
                         gameoverText.isVisible = true
+                        gameoverShadow.isVisible = true
+
+                        -- Show Return-to-Menu button after 1.5 s
+                        timer.performWithDelay(1500, function()
+                            if STATE ~= "GAMEOVER" then return end
+                            local returnBtn = widget.newButton({
+                                x = W / 2,
+                                y = display.contentCenterY + 80,
+                                label = "\226\134\169 กลับเมนู",
+                                font = native.systemFontBold,
+                                fontSize = 28,
+                                shape = "roundedRect",
+                                width = 280, height = 60,
+                                cornerRadius = 12,
+                                fillColor = { default={0.15,0.6,1,1}, over={0.05,0.4,0.8,1} },
+                                labelColor = { default={1,1,1}, over={0.9,0.9,0.9} },
+                                onEvent = function(e)
+                                    if e.phase == "ended" then
+                                        -- disconnect
+                                        if udp then udp:close(); udp = nil end
+                                        audio.stop(1)
+                                        -- reset groups
+                                        STATE = "MENU"
+                                        player_id = 0
+                                        ball_x, ball_y = W/2, 80
+                                        ball_vx, ball_vy = 300, -50
+                                        ball_scored = false
+                                        -- hide game, show menu
+                                        Groupbg.isVisible = false
+                                        gameGroup.isVisible = false
+                                        hudGroup.isVisible = false
+                                        menuGroup.isVisible = true
+                                        ipField.isVisible = true
+                                        portField.isVisible = true
+                                        ipLabelText.isVisible = true
+                                        portLabelText.isVisible = true
+                                        statusText.isVisible = true
+                                        statusText.text = "Enter server details to connect"
+                                        statusText:setFillColor(0.8, 0.8, 0.8)
+                                        connectBtn.isVisible = true
+                                        hideLoadingAnimation()
+                                        -- remove this button
+                                        display.remove(returnBtn)
+                                    end
+                                end
+                            })
+                            hudGroup:insert(returnBtn)
+                        end)
                     end
                 end
             end
