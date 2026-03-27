@@ -660,11 +660,11 @@ local function onTouch(event)
         local minX = display.screenOriginX
         local maxX = display.contentWidth - display.screenOriginX
         if player_id == 1 then
-            if target.x < minX + 120 then target.x = minX + 120 end
-            if target.x > W/2 - 138 then target.x = W/2 - 138 end
+            if target.x < minX + 60 then target.x = minX + 60 end
+            if target.x > W/2 - 78 then target.x = W/2 - 78 end
         else
-            if target.x < W/2 + 138 then target.x = W/2 + 138 end
-            if target.x > maxX - 120 then target.x = maxX - 120 end
+            if target.x < W/2 + 78 then target.x = W/2 + 78 end
+            if target.x > maxX - 60 then target.x = maxX - 60 end
         end
 
     elseif event.phase == "ended" or event.phase == "cancelled" then
@@ -696,11 +696,11 @@ local function update()
                 local minX = display.screenOriginX
                 local maxX = display.contentWidth - display.screenOriginX
                 if player_id == 1 then
-                    if target.x < minX + 120 then target.x = minX + 120 end
-                    if target.x > W/2 - 138 then target.x = W/2 - 138 end
+                    if target.x < minX + 60 then target.x = minX + 60 end
+                    if target.x > W/2 - 78 then target.x = W/2 - 78 end
                 else
-                    if target.x < W/2 + 138 then target.x = W/2 + 138 end
-                    if target.x > maxX - 120 then target.x = maxX - 120 end
+                    if target.x < W/2 + 78 then target.x = W/2 + 78 end
+                    if target.x > maxX - 60 then target.x = maxX - 60 end
                 end
             end
 

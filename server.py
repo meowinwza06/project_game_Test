@@ -23,8 +23,8 @@ WIDTH = 1000
 HEIGHT = 500
 FLOOR_Y = 500
 BALL_RADIUS = 70
-P_WIDTH = 240
-P_HEIGHT = 300
+P_WIDTH = 120
+P_HEIGHT = 260
 NET_HEIGHT = 360
 NET_WIDTH = 36
 
@@ -190,27 +190,29 @@ while True:
         net_top = FLOOR_Y - NET_HEIGHT
         net_y = FLOOR_Y - NET_HEIGHT / 2
         
-        if check_collision(net_x, net_y, NET_WIDTH, NET_HEIGHT, ball_next_x, ball_next_y, BALL_RADIUS):
-            if ball["y"] + BALL_RADIUS <= net_top:
-                # Top bounce
-                ball["vy"] *= -0.7
-                ball_next_y = net_top - BALL_RADIUS
+        closest_x = max(net_x - NET_WIDTH/2, min(ball_next_x, net_x + NET_WIDTH/2))
+        closest_y = max(net_top, min(ball_next_y, FLOOR_Y))
+        
+        c_dx = ball_next_x - closest_x
+        c_dy = ball_next_y - closest_y
+        dist_sq = c_dx**2 + c_dy**2
+        
+        if dist_sq < BALL_RADIUS**2:
+            if dist_sq == 0:
+                nx, ny, dist = 0, -1, 0.1
             else:
-                # Side bounce
-                if (ball["x"] < net_x and ball["vx"] > 0) or (ball["x"] > net_x and ball["vx"] < 0):
-                    ball["vx"] *= -0.8
-                    if ball_next_y < net_top:
-                        dy = ball_next_y - net_top
-                        dx = max(0, BALL_RADIUS**2 - dy**2) ** 0.5
-                        if ball["x"] < net_x:
-                            ball_next_x = (net_x - NET_WIDTH/2) - dx
-                        else:
-                            ball_next_x = (net_x + NET_WIDTH/2) + dx
-                    else:
-                        if ball["x"] < net_x:
-                            ball_next_x = net_x - (NET_WIDTH/2 + BALL_RADIUS)
-                        else:
-                            ball_next_x = net_x + (NET_WIDTH/2 + BALL_RADIUS)
+                dist = dist_sq ** 0.5
+                nx, ny = c_dx / dist, c_dy / dist
+                
+            pen = BALL_RADIUS - dist
+            ball_next_x += nx * pen
+            ball_next_y += ny * pen
+            
+            dot = ball["vx"] * nx + ball["vy"] * ny
+            if dot < 0:
+                res = 0.75
+                ball["vx"] -= (1 + res) * dot * nx
+                ball["vy"] -= (1 + res) * dot * ny
 
         # Player collisions
         hit = False
