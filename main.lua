@@ -51,6 +51,11 @@ local player_vy = 0
 local swipe_yStart = 0
 local swipe_triggered = false
 
+-- Interpolation targets for remote players and ball (smooth out UDP jitter)
+local p1_target_x, p1_target_y = nil, nil
+local p2_target_x, p2_target_y = nil, nil
+local ball_target_x, ball_target_y = nil, nil
+
 -- Client-side ball physics (P1 is authoritative)
 local BALL_R     = 70    -- must match visual circle radius
 local NET_W      = 80    -- must match visual net width
@@ -714,6 +719,23 @@ Runtime:addEventListener("touch", onTouch)
 
 -- Main Loop
 local function update()
+    -- Smooth interpolation for remote player objects and ball (reduces UDP jitter)
+    local lerpFactor = 0.25
+    local ballLerp  = 0.45   -- faster lerp for ball so it feels responsive
+    if p1_target_x and p1Obj and player_id ~= 1 then
+        p1Obj.x = p1Obj.x + (p1_target_x - p1Obj.x) * lerpFactor
+        p1Obj.y = p1Obj.y + (p1_target_y - p1Obj.y) * lerpFactor
+    end
+    if p2_target_x and p2Obj and player_id ~= 2 then
+        p2Obj.x = p2Obj.x + (p2_target_x - p2Obj.x) * lerpFactor
+        p2Obj.y = p2Obj.y + (p2_target_y - p2Obj.y) * lerpFactor
+    end
+    -- Ball lerp for P2 (P1 runs ball physics locally so no lerp needed)
+    if ball_target_x and ballObj and player_id == 2 then
+        ballObj.x = ballObj.x + (ball_target_x - ballObj.x) * ballLerp
+        ballObj.y = ballObj.y + (ball_target_y - ballObj.y) * ballLerp
+    end
+
     if STATE == "PLAYING" and not isPaused and player_id > 0 then
         local target = (player_id == 1) and p1Obj or p2Obj
         if target then
@@ -892,16 +914,17 @@ local function update()
 
                 elseif STATE == "PLAYING" or STATE == "PAUSED" then
                     if msg.type == "STATE" and STATE == "PLAYING" then
-                        -- Ball position: P2 reads from server relay; P1 ignores (runs local physics)
-                        if ballObj and player_id ~= 1 then
-                            ballObj.x = msg.ball.x
-                            ballObj.y = msg.ball.y
+                        -- Ball position: P2 stores as lerp target; P1 ignores (runs local physics)
+                        if player_id ~= 1 then
+                            ball_target_x = msg.ball.x
+                            ball_target_y = msg.ball.y
                         end
-                        if p1Obj and (player_id ~= 1) then
-                            p1Obj.x, p1Obj.y = msg.p1.x, msg.p1.y
+                        -- Store as interpolation targets instead of snapping directly
+                        if player_id ~= 1 then
+                            p1_target_x, p1_target_y = msg.p1.x, msg.p1.y
                         end
-                        if p2Obj and (player_id ~= 2) then
-                            p2Obj.x, p2Obj.y = msg.p2.x, msg.p2.y
+                        if player_id ~= 2 then
+                            p2_target_x, p2_target_y = msg.p2.x, msg.p2.y
                         end
 
                         scoreText.text = msg.p1.score .. " - " .. msg.p2.score
