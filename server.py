@@ -170,16 +170,29 @@ while True:
         # Net collision
         net_x = WIDTH / 2
         net_top = FLOOR_Y - NET_HEIGHT
-        if abs(ball_next_x - net_x) < (NET_WIDTH/2 + BALL_RADIUS):
-            if ball["y"] <= net_top and ball_next_y + BALL_RADIUS > net_top:
+        net_y = FLOOR_Y - NET_HEIGHT / 2
+        
+        if check_collision(net_x, net_y, NET_WIDTH, NET_HEIGHT, ball_next_x, ball_next_y, BALL_RADIUS):
+            if ball["y"] + BALL_RADIUS <= net_top:
                 # Top bounce
                 ball["vy"] *= -0.7
                 ball_next_y = net_top - BALL_RADIUS
-            elif ball_next_y + BALL_RADIUS > net_top:
+            else:
                 # Side bounce
                 if (ball["x"] < net_x and ball["vx"] > 0) or (ball["x"] > net_x and ball["vx"] < 0):
                     ball["vx"] *= -0.8
-                    ball_next_x = ball["x"]
+                    if ball_next_y < net_top:
+                        dy = ball_next_y - net_top
+                        dx = max(0, BALL_RADIUS**2 - dy**2) ** 0.5
+                        if ball["x"] < net_x:
+                            ball_next_x = (net_x - NET_WIDTH/2) - dx
+                        else:
+                            ball_next_x = (net_x + NET_WIDTH/2) + dx
+                    else:
+                        if ball["x"] < net_x:
+                            ball_next_x = net_x - (NET_WIDTH/2 + BALL_RADIUS)
+                        else:
+                            ball_next_x = net_x + (NET_WIDTH/2 + BALL_RADIUS)
 
         # Player collisions
         hit = False
